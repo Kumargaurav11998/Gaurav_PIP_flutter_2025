@@ -20,13 +20,19 @@ public class PipController implements PipActivity.PipActivityListener {
   public enum PipState {
     Started(0),
     Stopped(1),
-    Failed(2);
+    Failed(2),
+    OnLeaveTriggered(3), // New state for onLeave functionality
+    AutoEnterEnabled(4); // New state for auto enter
 
     private final int value;
 
-    PipState(int value) { this.value = value; }
+    PipState(int value) {
+      this.value = value;
+    }
 
-    public int getValue() { return value; }
+    public int getValue() {
+      return value;
+    }
   }
 
   public interface PipStateChangedListener {
@@ -34,19 +40,25 @@ public class PipController implements PipActivity.PipActivityListener {
   }
 
   private static class PipParams {
-    @Nullable private final Rational aspectRatio;
-    @Nullable private final Boolean autoEnterEnabled;
-    @Nullable private final Rect sourceRectHint;
-    @Nullable private final Boolean seamlessResizeEnabled;
-    @Nullable private final Boolean useExternalStateMonitor;
-    @Nullable private final Integer externalStateMonitorInterval;
+    @Nullable
+    private final Rational aspectRatio;
+    @Nullable
+    private final Boolean autoEnterEnabled;
+    @Nullable
+    private final Rect sourceRectHint;
+    @Nullable
+    private final Boolean seamlessResizeEnabled;
+    @Nullable
+    private final Boolean useExternalStateMonitor;
+    @Nullable
+    private final Integer externalStateMonitorInterval;
 
     public PipParams(@Nullable Rational aspectRatio,
-                     @Nullable Boolean autoEnterEnabled,
-                     @Nullable Rect sourceRectHint,
-                     @Nullable Boolean seamlessResizeEnabled,
-                     @Nullable Boolean useExternalStateMonitor,
-                     @Nullable Integer externalStateMonitorInterval) {
+        @Nullable Boolean autoEnterEnabled,
+        @Nullable Rect sourceRectHint,
+        @Nullable Boolean seamlessResizeEnabled,
+        @Nullable Boolean useExternalStateMonitor,
+        @Nullable Integer externalStateMonitorInterval) {
       this.aspectRatio = aspectRatio;
       this.autoEnterEnabled = autoEnterEnabled;
       this.sourceRectHint = sourceRectHint;
@@ -69,9 +81,10 @@ public class PipController implements PipActivity.PipActivityListener {
   private Handler mHandler;
   private Runnable mCheckStateTask;
   private boolean mLastPipState = false;
+  private boolean mOnLeaveTriggered = false; // Track if onLeave was triggered
 
   public PipController(@NonNull Activity activity,
-                       @Nullable PipStateChangedListener listener) {
+      @Nullable PipStateChangedListener listener) {
     setActivity(activity);
     mListener = listener;
     mHandler = new Handler(Looper.getMainLooper());
@@ -106,8 +119,7 @@ public class PipController implements PipActivity.PipActivityListener {
       return false;
     }
 
-    final PackageManager pm =
-        activity.getApplicationContext().getPackageManager();
+    final PackageManager pm = activity.getApplicationContext().getPackageManager();
     if (pm == null) {
       return false;
     }
@@ -131,7 +143,7 @@ public class PipController implements PipActivity.PipActivityListener {
   private void setActivity(Activity activity) {
     mActivity = new WeakReference<>(activity);
     if (activity instanceof PipActivity) {
-      ((PipActivity)activity).setPipActivityListener(this);
+      ((PipActivity) activity).setPipActivityListener(this);
     }
 
     mIsSupported = checkPipSupport();
@@ -142,7 +154,9 @@ public class PipController implements PipActivity.PipActivityListener {
     setActivity(activity);
   }
 
-  public boolean isSupported() { return mIsSupported; }
+  public boolean isSupported() {
+    return mIsSupported;
+  }
 
   public boolean isAutoEnterSupported() {
     return mIsAutoEnterSupported;
@@ -162,12 +176,27 @@ public class PipController implements PipActivity.PipActivityListener {
     return false;
   }
 
+  // Check if onLeave was triggered
+  public boolean isOnLeaveTriggered() {
+    return mOnLeaveTriggered;
+  }
+
+  // Method to manually trigger onLeave functionality
+  public void triggerOnLeave() {
+    onUserLeaveHint();
+  }
+
+  // Method to reset onLeave state
+  public void resetOnLeaveState() {
+    mOnLeaveTriggered = false;
+  }
+
   public boolean setup(@Nullable Rational aspectRatio,
-                       @Nullable Boolean autoEnterEnabled,
-                       @Nullable Rect sourceRectHint,
-                       @Nullable Boolean seamlessResizeEnabled,
-                       @Nullable Boolean useExternalStateMonitor,
-                       @Nullable Integer externalStateMonitorInterval) {
+      @Nullable Boolean autoEnterEnabled,
+      @Nullable Rect sourceRectHint,
+      @Nullable Boolean seamlessResizeEnabled,
+      @Nullable Boolean useExternalStateMonitor,
+      @Nullable Integer externalStateMonitorInterval) {
     if (!isSupported()) {
       return false;
     }
@@ -187,26 +216,30 @@ public class PipController implements PipActivity.PipActivityListener {
           !Objects.equals(mPipParams.autoEnterEnabled, autoEnterEnabled) ||
           !Objects.equals(mPipParams.sourceRectHint, sourceRectHint) ||
           !Objects.equals(mPipParams.seamlessResizeEnabled,
-                          seamlessResizeEnabled) ||
+              seamlessResizeEnabled)
+          ||
           !Objects.equals(mPipParams.useExternalStateMonitor,
-                          useExternalStateMonitor) ||
+              useExternalStateMonitor)
+          ||
           !Objects.equals(mPipParams.externalStateMonitorInterval,
-                          externalStateMonitorInterval)) {
-        mPipParams =
-            new PipParams(aspectRatio, autoEnterEnabled, sourceRectHint,
-                          seamlessResizeEnabled, useExternalStateMonitor,
-                          externalStateMonitorInterval);
+              externalStateMonitorInterval)) {
+        mPipParams = new PipParams(aspectRatio, autoEnterEnabled, sourceRectHint,
+            seamlessResizeEnabled, useExternalStateMonitor,
+            externalStateMonitorInterval);
       }
 
       if (mPipParams.aspectRatio != null) {
         mParamsBuilder.setAspectRatio(mPipParams.aspectRatio);
       }
 
-      // Note: setAutoEnterEnabled will not work if the target Android version
-      // is 11 or lower
+      // Enhanced auto enter functionality for Android 12+ (includes onLeave)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        mParamsBuilder.setAutoEnterEnabled(
-            Boolean.TRUE.equals(mPipParams.autoEnterEnabled));
+        boolean shouldAutoEnter = Boolean.TRUE.equals(mPipParams.autoEnterEnabled);
+        mParamsBuilder.setAutoEnterEnabled(shouldAutoEnter);
+
+        if (shouldAutoEnter) {
+          notifyPipStateChanged(PipState.AutoEnterEnabled);
+        }
       }
 
       if (mPipParams.sourceRectHint != null) {
@@ -289,8 +322,8 @@ public class PipController implements PipActivity.PipActivityListener {
       // when setAutoEnterEnabled is supported
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         activity.setPictureInPictureParams(new PictureInPictureParams.Builder()
-                                               .setAutoEnterEnabled(false)
-                                               .build());
+            .setAutoEnterEnabled(false)
+            .build());
       }
     }
 
@@ -299,6 +332,7 @@ public class PipController implements PipActivity.PipActivityListener {
     mHandler = null;
     mLastPipState = false;
     mCheckStateTask = null;
+    mOnLeaveTriggered = false;
   }
 
   private void startStateMonitoring() {
@@ -325,8 +359,8 @@ public class PipController implements PipActivity.PipActivityListener {
         checkPipState();
         mHandler.postDelayed(
             this, mPipParams.externalStateMonitorInterval != null
-                      ? mPipParams.externalStateMonitorInterval.longValue()
-                      : CHECK_INTERVAL_MS);
+                ? mPipParams.externalStateMonitorInterval.longValue()
+                : CHECK_INTERVAL_MS);
       }
     };
     mHandler.post(mCheckStateTask);
@@ -340,7 +374,7 @@ public class PipController implements PipActivity.PipActivityListener {
 
   @Override
   public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode,
-                                            Configuration newConfig) {
+      Configuration newConfig) {
     if (Boolean.TRUE.equals(mPipParams.useExternalStateMonitor)) {
       return;
     }
@@ -364,10 +398,20 @@ public class PipController implements PipActivity.PipActivityListener {
 
   @Override
   public void onUserLeaveHint() {
-    // Only need to handle auto enter pip for android version below 12
+    mOnLeaveTriggered = true;
+    notifyPipStateChanged(PipState.OnLeaveTriggered);
+
+    // Handle auto enter pip for Android versions below 12
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
       if (Boolean.TRUE.equals(mPipParams.autoEnterEnabled)) {
         start();
+      }
+    } else {
+      // For Android 12+, the system handles auto enter automatically
+      // but we can still track the event and notify the state change
+      if (Boolean.TRUE.equals(mPipParams.autoEnterEnabled)) {
+        // The system will automatically enter PiP mode
+        // We just need to track that onLeave was triggered
       }
     }
   }
